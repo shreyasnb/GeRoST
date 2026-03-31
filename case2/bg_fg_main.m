@@ -5,6 +5,9 @@
 
 clear; clc; close all;
 
+% Apply IEEE Plot Settings
+ieee_settings();
+
 %% 1. Path Setup
 % Add GeRoST class and utils
 addpath('../'); 
@@ -24,7 +27,7 @@ fprintf('\n--- Generating synthetic video data ---\n');
 
 H = 64; W = 64;           % Image dimensions
 n = H * W;                % Ambient dimension
-N = 400;                  % Total number of frames
+N = 300;                  % Total number of frames
 k = 5;                    % True background subspace dimension
 T_init = 10;              % Initial frames strictly for SVD
 
@@ -35,6 +38,9 @@ V0 = UV(:, k+1:2*k);
 
 U_true = zeros(n, k, N);
 bg_true = zeros(n, N);
+% Storage for sensitivity plot
+rho_log = NaN(1, N);
+lambda_log = NaN(1, N);
 
 for t = 1:N
     theta = 0.5 * sin(2 * pi * t / N); 
@@ -70,12 +76,12 @@ fprintf('\n--- Initializing Trackers (Warm-up: Frames 1 to %d) ---\n', T_init);
 [U_init, ~, ~] = svd(Y(:, 1:T_init), 'econ');
 U0_hat = U_init(:, 1:k);
 
-% DIAGNOSTIC: Verify the baseline SVD actually found the true subspace
+% Verify the baseline SVD actually found the true subspace
 err_init = chordalDist(U_true(:,:,T_init), U0_hat);
 fprintf('Baseline SVD Error at Frame %d: %.4f\n', T_init, err_init);
 
 % --- Initialize GeRoST ---
-d_est = 7; % TWEAK A: Over-parameterize (d > k) to isolate outlier dimensions in the SVD window
+d_est = 7; % Over-parameterize (d > k) to isolate outlier dimensions in the SVD window
 window_len = 30;
 
 % Initialize GeRoST (rho will be adaptively overridden inside the loop)
@@ -161,9 +167,9 @@ for t = T_init+1:N
     sigma_k = max(sigma_k, 1e-6);
     
     % Expand Grassmannian uncertainty ball gracefully for outliers
-    % TWEAK B: Hard-cap the radius to prevent tracking the outlier
+    % Hard-cap the radius to prevent tracking the outlier
     p_t_capped = min(p_t, 0.15); % Cap NSR explicitly
-    rho_t = (sqrt(2) * p_t_capped) / (1 - p_t_capped) + 0.05; % Max rho_t ~ 0.3
+    rho_t = (sqrt(2) * p_t_capped) / (1 - p_t_capped) + sqrt(d_est-k); % Max rho_t ~ 1.414+0.25
     
     % Inject adaptive rho into tracker
     gerost_tracker.rho_param = rho_t;
@@ -171,6 +177,9 @@ for t = T_init+1:N
     % Execute Tracking (Internally runs K=5 gradient descent loops)
     gerost_tracker = gerost_tracker.descent_step(y_t);
     U_gerost = gerost_tracker.U;
+
+    rho_log(t) = rho_t;
+    lambda_log(t) = gerost_tracker.lambda_star; 
     
     [bg_g, fg_g] = extract_fg_bg_ista(y_t, U_gerost, 1.0);
     bg_gerost(:, t) = bg_g;
@@ -223,7 +232,7 @@ fprintf('\nTracking complete!\n');
 fprintf('Generating plots...\n');
 
 figure('Name', 'Subspace Tracking Error', 'Position', [100, 100, 600, 400]);
-plot(1:N, err_gerost, 'b-', 'LineWidth', 2, 'DisplayName', 'GeRoST (Proposed)');
+plot(1:N, err_gerost, 'b-', 'LineWidth', 2, 'DisplayName', 'GeRoST');
 hold on;
 plot(1:N, err_great, 'g-.', 'LineWidth', 2, 'DisplayName', 'GREAT');
 if run_grasta
@@ -234,7 +243,7 @@ xlabel('Frame Index (t)', 'Interpreter', 'latex');
 ylabel('Chordal Distance $d_c(\mathcal{U}_t, \hat{\mathcal{U}}_t)$', 'Interpreter', 'latex');
 title('Subspace Tracking Error under Moving Occlusions', 'Interpreter', 'latex');
 legend('Location', 'best', 'Interpreter', 'latex');
-grid on; set(gca, 'FontSize', 12);
+grid on;
 saveas(gcf, 'results/subspace_error_case2.png');
 
 visual_frame = 250;
@@ -334,8 +343,33 @@ xlabel('False Positive Rate (FPR)', 'Interpreter', 'latex');
 ylabel('True Positive Rate (TPR)', 'Interpreter', 'latex');
 title('ROC for Foreground Separation', 'Interpreter', 'latex');
 legend('Location', 'southeast', 'Interpreter', 'latex');
-grid on; set(gca, 'FontSize', 12);
+grid on;
 saveas(gcf, 'results/roc_case2.png');
+
+figure('Position', [100 100 560 280]);
+yyaxis left
+plot(1:N, rho_log, 'b-', 'LineWidth', 1.5);
+ylabel('$\rho_t$', 'Interpreter', 'latex');
+ylim([0 0.5]);
+
+yyaxis right
+plot(1:N, lambda_log, 'r--', 'LineWidth', 1.5);
+ylabel('$\lambda^*_t$', 'Interpreter', 'latex');
+ylim([2 inf]);
+
+xline(50, 'k:', 'LineWidth', 1.2, ...
+    'Label', 'Occlusion Starts', ...
+    'Interpreter', 'latex');
+yline(2, 'r:', 'LineWidth', 1.0); 
+% uniqueness threshold lambda* > 2
+
+xlabel('Frame Index $t$', 'Interpreter', 'latex');
+title('Adaptive $\rho_t$ and $\lambda^*_t$ Evolution', ...
+    'Interpreter', 'latex');
+legend({'$\rho_t$', '$\lambda^*_t$'}, ...
+    'Interpreter', 'latex', 'Location', 'northeast');
+grid on;
+saveas(gcf, 'results/rho_lambda_evolution.png');
 
 
 %% ========================================================================

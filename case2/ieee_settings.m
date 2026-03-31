@@ -11,8 +11,8 @@ function ieee_settings()
     set(groot, 'defaultLegendInterpreter', 'latex');
 
     % Set default font sizes (10pt is standard for IEEE figures)
-    set(groot, 'defaultAxesFontSize', 10);
-    set(groot, 'defaultTextFontSize', 10);
+    set(groot, 'defaultAxesFontSize', 18);
+    set(groot, 'defaultTextFontSize', 18);
 
     % Set default line widths for better visibility in print
     set(groot, 'defaultLineLineWidth', 1.5);

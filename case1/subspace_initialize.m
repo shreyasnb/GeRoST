@@ -4,13 +4,13 @@ function [gerost_obj, great_obj, U0, params] = ...
 %
 %   [gerost_obj, great_obj, U0, params] = subspace_initialize(u, y, params)
 %
-%   Mirrors ss_initialize.m exactly for the Hankel construction and SVD.
+%   Hankel construction and SVD.
 %   Additionally instantiates gerost and great objects seeded with U0.
 %
 %   Required params fields
 %   ----------------------
 %   L          : Hankel window length
-%   order      : system-order estimate  ->  d = m*L + order  (as in ss_initialize)
+%   order      : system-order estimate ->  d = m*L + order  (as in ss_initialize)
 %   T_d        : sliding-window length (number of Hankel columns)
 %   K          : gradient-descent iterations per step
 %   rho        : GeRoST ball radius (scalar or function handle)
@@ -37,7 +37,7 @@ H_U = construct_hankel(u, params.L);
 H_Y = construct_hankel(y, params.L);
 W_0 = [H_U; H_Y];
 
-d   = m*params.L + params.order;      % subspace dimension (ss_initialize convention)
+d   = m*params.L + params.order;      % subspace dimension
 params.d = d;
 
 [U_svd, ~, ~] = svd(W_0, 'econ');

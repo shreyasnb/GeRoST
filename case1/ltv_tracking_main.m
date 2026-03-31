@@ -43,21 +43,21 @@ u_tv = [u_train, u_val];
 y_tv = [y_train, y_val];
 
 %% Parameters
-ss_params.L           = 8;
-ss_params.T_ini       = 3;
+ss_params.L           = 10;
+ss_params.T_ini       = 5;
 ss_params.T_fut       = ss_params.L - ss_params.T_ini;
 ss_params.K           = 3;
 ss_params.max_steps   = T_val + T_test_d + 50;
 
 % Fixed parametes
-ss_params.order_range = [6];
-ss_params.T_d_range   = [150]; 
+ss_params.order_range = [3];
+ss_params.T_d_range   = [100]; 
 ss_params.rho_range   = [0.2];
 
 % Redundantly set explicit single values in case other functions rely on them
 ss_params.rho         = 0.2;
-ss_params.order       = 6;
-ss_params.T_d         = 150; % Ensures T_d > m*L + n
+ss_params.order       = 3; % System order
+ss_params.T_d         = 100; % Ensures T_d > m*L + n
 ss_params.d           = m * ss_params.L + ss_params.order; 
 
 %% Initialise
@@ -68,10 +68,9 @@ ss_params.d           = m * ss_params.L + ss_params.order;
     gerost_validate(U_0, u_tv, y_tv, T_train, ss_params);
 
 % =========================================================================
-% DYNAMIC RHO OVERRIDE (Based on Remark 4.7)
+% ADAPTIVE RHO (Based on Remark 4.7)
 % =========================================================================
 gerost_val.rho_param = @(t, sigs, What, Y) compute_dynamic_rho(sigs, gerost_val.k, gerost_val.d);
-fprintf('Swapped GeRoST fixed rho for dynamic theoretical NSR bound.\n');
 
 %% Online test
 nr_scenarios = size(y_test, 3);
@@ -117,8 +116,6 @@ for scenario = 1:nr_scenarios
 end
 
 %% Save results
-% Enforce strictly real numbers across the aggregated arrays to strip 
-% out any trailing complex precision artifacts from standard deviation/mean.
 err_gerost_a = real(mean(err_gerost, 2));   std_err_gerost = real(std(err_gerost, 0, 2));
 err_great_a  = real(mean(err_great,  2));   std_err_great  = real(std(err_great,  0, 2));
 
@@ -155,18 +152,17 @@ fill([t_axis; flipud(t_axis)], ...
 
 % Plot the average errors on top of the shaded regions
 plot(t_axis, err_great_a,  '-', 'Color', col_great,  'LineWidth', 2, 'DisplayName', 'GREAT');
-plot(t_axis, err_gerost_a, '-', 'Color', col_gerost, 'LineWidth', 2, 'DisplayName', 'GeRoST (Proposed)');
+plot(t_axis, err_gerost_a, '-', 'Color', col_gerost, 'LineWidth', 2, 'DisplayName', 'GeRoST');
 
 if large_error
     % Plot a dashed black line to signify the sensor fault
     xline(80, 'k--', 'LineWidth', 1.5, 'DisplayName', 'Sensor fault');
 end
 
-% Formatting based on provided example 
 xlabel('$t$');
 ylabel('Relative prediction error');
 xlim([0, T_steps]);
-ylim([0, 10]); % Lock y-axis to match GREAT paper scaling
+ylim([0, 15]);
 legend('Location', 'best');
 
 % Force the axis box and ticks to be on top of the shaded patches
@@ -176,7 +172,7 @@ set(gca, 'Layer', 'top');
 if large_error
     fault_idx = 80;
     
-    % Calculate post-fault mean and std across all time steps and scenarios (enforced real)
+    % Calculate post-fault mean and std across all time steps and scenarios
     post_fault_gerost = real(err_gerost(fault_idx+1:end, :));
     post_fault_great  = real(err_great(fault_idx+1:end, :));
     
@@ -188,7 +184,7 @@ if large_error
 
     improvement_great = (mean_pf_great - mean_pf_gerost) / mean_pf_great * 100;
     
-    % Print quantification to console
+    % Print quantification
     fprintf('\n--- Post-Fault Performance (t > %d) ---\n', fault_idx);
     fprintf('GREAT  : Mean Error = %.3f, Std Dev = %.3f\n', mean_pf_great, std_pf_great);
     fprintf('GeRoST : Mean Error = %.3f, Std Dev = %.3f\n', mean_pf_gerost, std_pf_gerost);
@@ -226,7 +222,7 @@ function s = make_sample(u_, y_, i_, L_, m_, p_)
 end
 
 function rho = compute_dynamic_rho(sigma_vals, k, d)
-    % COMPUTE_DYNAMIC_RHO Computes the minimum uncertainty ball radius 
+    % Computes the minimum uncertainty ball radius 
     if length(sigma_vals) > k
         sigma_k  = max(sigma_vals(k), 1e-8);
         sigma_k1 = max(sigma_vals(k+1), 0);

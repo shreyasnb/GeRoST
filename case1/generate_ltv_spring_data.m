@@ -36,10 +36,10 @@ d_T          = 0.1;                   % discretisation step (s)
 T_final      = 900;                   % total simulation steps
 T_train      = floor(T_final / 3);   % 300
 T_val_end    = floor(2*T_final / 3); % 600  (val data: steps 301-600)
-nr_scenarios = 10;
+nr_scenarios = 50;
 error_time   = 80;                    % spike location within test trajectory
 
-snr       = 10;
+snr       = 5; % sensor fault magnitude
 signal_sd = 1;
 noise_sd  = signal_sd / snr;
 

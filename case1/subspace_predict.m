@@ -3,9 +3,6 @@ function pred_y = subspace_predict(U, u_ini, y_ini, u_fut, params)
 %
 %   pred_y = subspace_predict(U, u_ini, y_ini, u_fut, params)
 %
-%   Drop-in equivalent of ss_predict.m for gerost / great subspace
-%   estimates.  Logic is IDENTICAL to ss_predict.m.
-%
 %   Row layout of U  (n = L*(m+p) rows)
 %   ------------------------------------
 %   1  :  m*L              full L-step input window  (u_ini stacked with u_fut)

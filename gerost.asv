@@ -61,6 +61,7 @@ classdef gerost
             addParameter(p, 'K', 5, @isnumeric);
             addParameter(p, 'rho', 0.1, @(x) isnumeric(x) || isa(x, 'function_handle'));
             addParameter(p, 'alpha', [], @(x) isempty(x) || isnumeric(x));
+            addParameter(p, 'missing', false, @islogical);
             addParameter(p, 'fallback', 'data', @ischar);
             addParameter(p, 'max_steps', 1000, @isnumeric);
 
@@ -73,7 +74,7 @@ classdef gerost
             obj.K = p.Results.K;
             obj.rho_param   = p.Results.rho;
             obj.alpha_param = p.Results.alpha;
-            obj.missing     = false;
+            obj.missing     = p.Results.missing;
             obj.fallback    = p.Results.fallback;
 
             % Initialize state
@@ -88,6 +89,7 @@ classdef gerost
             % Cached SVD — empty until first full-window SVD is computed
             obj.U_what          = [];
             obj.sigma_vals_w    = [];
+            obj.imputed_samples = zeros(n, p.Results.max_steps);  % BUG 2+3 fix
 
             % Initialize Manopt Grassmann manifold
             obj.manifold = grassmannfactory(n, k);
@@ -109,6 +111,18 @@ classdef gerost
             else
                 rho = obj.rho_param;
             end
+        end
+
+        function u_tilde = impute(obj, u, mask)
+            if isempty(mask) || all(mask)
+                u_tilde = u;
+                return;
+            end
+            u_tilde   = u;
+            U_obs     = obj.U(mask, :);
+            w_star    = U_obs \ u(mask);
+            u_imputed = obj.U * w_star;
+            u_tilde(~mask) = u_imputed(~mask);
         end
 
         % ----------------------------------------------------------------
@@ -135,6 +149,11 @@ classdef gerost
                 u_out = obj.samples(:, obj.t - obj.T);  % leaving the window
                 u_in  = obj.samples(:, obj.t);          % entering the window
 
+                if obj.missing
+                    u_out = impute(obj, u_out, obj.masks_full(:, obj.t - obj.T));
+                    u_in  = impute(obj, u_in,  obj.masks_full(:, obj.t));
+                end
+
                 U = obj.U_what;        % (n x d)
                 s = obj.sigma_vals_w;  % (d x 1)
 
@@ -150,7 +169,17 @@ classdef gerost
                 % ----------------------------------------------------------
                 % Warm-up: full thin SVD
                 % ----------------------------------------------------------
-                W = obj.samples(:, obj.window_idx);
+                if obj.missing
+                    cols = zeros(obj.n, length(obj.window_idx));
+                    for ii = 1:length(obj.window_idx)
+                        idx = obj.window_idx(ii);
+                        cols(:, ii) = impute(obj, obj.samples(:, idx), ...
+                                                  obj.masks_full(:, idx));
+                    end
+                    W = cols;
+                else
+                    W = obj.samples(:, obj.window_idx);
+                end
 
                 [U_svd, S, ~] = svd(W, 'econ');
                 sv            = diag(S);
@@ -276,7 +305,7 @@ classdef gerost
             k          = size(Y, 2);
             LAMBDA_MIN = 2 + 1e-6;
 
-            % --- helper: chordal distance between Vd and What ---
+            % --- helper: chordal distance between Vd and What (inlined) ---
             %   d_c(A,B)^2 = d - ||A^T B||_F^2   (principal-angle definition)
             dc_fn = @(Vd) sqrt(max(d - sum(min(svd(Vd' * What), 1).^2), 0));
 

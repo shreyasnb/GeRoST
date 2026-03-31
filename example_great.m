@@ -8,11 +8,11 @@ s = plot_settings();  % Load IEEE plot settings
 %% Setup: Common parameters for both algorithms
 % Problem dimensions
 n = 50;        % ambient dimension
-k = 5;         % true subspace dimension
-T = 10;        % window length
-K = 5;         % inner gradient descent iterations
+k = 10;         % true subspace dimension
+T = 20;        % window length
+K = 15;         % inner gradient descent iterations
 
-t_0 = 20;  % data collection duration
+t_0 = 50;  % data collection duration
 num_steps = 100;
 num_trials = 5;  % number of Monte Carlo trials for error bars
 

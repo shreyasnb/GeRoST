@@ -4,7 +4,7 @@ function [gerost_val, great_val, params] = ...
 %
 %   [gerost_val, great_val, params] = gerost_validate(U_0, u, y, T_train, params)
 %
-%   Mirrors the ss_validate.m structure:
+%   Structure:
 %     - outer loop over order_range  (sets subspace dimension d = m*L + order)
 %     - inner loop over T_d_range    (sliding-window length)
 %     - innermost loop over rho_range (GeRoST only)
