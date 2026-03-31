@@ -4,18 +4,6 @@ classdef gerost
     % This class implements online subspace tracking via constrained gradient
     % descent on the Grassmann manifold with a ball constraint on subspace
     % perturbations.
-    %
-    % Properties
-    % ----------
-    % n : int, ambient dimension
-    % k : int, true subspace dimension
-    % d : int, data subspace dimension (d >= k)
-    % T : int, window length
-    % K : int, number of inner gradient descent iterations per time step
-    % rho_param : float or function handle, ball radius
-    % alpha_param : float or empty, step-size
-    % missing : bool, whether to handle missing data
-    % fallback : str, 'subspace' or 'data' for inactive constraint handling
 
     properties
         n           % ambient dimension
@@ -36,12 +24,7 @@ classdef gerost
         window_idx  % indices for sliding window
         t           % current time step
 
-        % ----------------------------------------------------------------
-        % Cached SVD of window matrix W_{t-1}  — used for rank-2 updates.
-        %   W_t W_t^T = W_{t-1} W_{t-1}^T  -  u_{t-T} u_{t-T}^T  +  u_t u_t^T
-        % U_what       : (n x d)  top-d left singular vectors of W_{t-1}
-        % sigma_vals_w : (d x 1)  corresponding singular values of W_{t-1}
-        % ----------------------------------------------------------------
+        % Cached SVD of window matrix W_{t-1}
         U_what        % (n x d) cached left singular vectors
         sigma_vals_w  % (d x 1) cached singular values
         lambda_star   % last bisection result (scalar), for diagnostics
@@ -52,11 +35,6 @@ classdef gerost
 
     methods
         function obj = gerost(n, k, d, T, varargin)
-            % Initialize gerost object
-            %
-            % Usage: obj = gerost(n, k, d, T, 'K', 5, 'rho', 0.1, ...
-            %                     'alpha', [], 'fallback', 'data')
-
             p = inputParser;
             addParameter(p, 'K', 5, @isnumeric);
             addParameter(p, 'rho', 0.1, @(x) isnumeric(x) || isa(x, 'function_handle'));
@@ -79,13 +57,13 @@ classdef gerost
             % Initialize state
             obj.U            = [];
             obj.U_history    = zeros(n, k, p.Results.max_steps);
-            obj.samples      = zeros(n, p.Results.max_steps);  % pre-allocated
-            obj.masks_full   = true(n, p.Results.max_steps);   % pre-allocated
+            obj.samples      = zeros(n, p.Results.max_steps);  
+            obj.masks_full   = true(n, p.Results.max_steps);   
             obj.window_idx   = [];
             obj.t            = 0;
             obj.lambda_star   = NaN;
 
-            % Cached SVD — empty until first full-window SVD is computed
+            % Cached SVD
             obj.U_what          = [];
             obj.sigma_vals_w    = [];
 
@@ -94,8 +72,6 @@ classdef gerost
         end
 
         function obj = initialize(obj, U0)
-            % Set initial subspace estimate
-            % U0 : (n x k) orthonormal basis
             obj.U = U0;
         end
 
@@ -111,54 +87,31 @@ classdef gerost
             end
         end
 
-        % ----------------------------------------------------------------
-        %  build_window_matrix
-        %
-        %  WARM-UP  (window not yet full, t <= T):
-        %    Full thin SVD of the current n-by-t slice — O(n t d).
-        %    Result is cached in obj.U_what / obj.sigma_vals_w.
-        %
-        %  STEADY STATE  (t > T):
-        %    Exploits the rank-2 recurrence
-        %      W_t W_t^T = W_{t-1} W_{t-1}^T - u_{t-T} u_{t-T}^T + u_t u_t^T
-        %    via two sequential rank-1 eigendecomposition updates — O(nd + d^3).
-        %    Replaces the O(nTd) full SVD that was called every step.
-        % ----------------------------------------------------------------
         function [obj, What, sigma_vals] = build_window_matrix(obj)
 
             window_full = (obj.t > obj.T) && ~isempty(obj.U_what);
 
             if window_full
-                % ----------------------------------------------------------
-                % Rank-2 incremental update
-                % ----------------------------------------------------------
-                u_out = obj.samples(:, obj.t - obj.T);  % leaving the window
-                u_in  = obj.samples(:, obj.t);          % entering the window
+                u_out = obj.samples(:, obj.t - obj.T);  
+                u_in  = obj.samples(:, obj.t);          
 
-                U = obj.U_what;        % (n x d)
-                s = obj.sigma_vals_w;  % (d x 1)
+                U = obj.U_what;        
+                s = obj.sigma_vals_w;  
 
-                % Downdate: subtract u_out u_out^T
                 [U, s] = gerost.rank1_eig_update(U, s, u_out, -1, obj.d);
-                % Update: add u_in u_in^T
                 [U, s] = gerost.rank1_eig_update(U, s, u_in,  +1, obj.d);
 
                 What       = U;
                 sigma_vals = s;
-
             else
-                % ----------------------------------------------------------
-                % Warm-up: full thin SVD
-                % ----------------------------------------------------------
                 W = obj.samples(:, obj.window_idx);
 
                 [U_svd, S, ~] = svd(W, 'econ');
                 sv            = diag(S);
                 What          = U_svd(:, 1:obj.d);
-                sigma_vals    = sv(1:obj.d);   % truncate to d: matches rank-2 path output length
+                sigma_vals    = sv(1:obj.d);   
             end
 
-            % Cache result for next step's rank-2 update
             obj.U_what       = What;
             obj.sigma_vals_w = sigma_vals(1:obj.d);
         end
@@ -170,47 +123,43 @@ classdef gerost
             mask = p.Results.mask;
 
             obj.t = obj.t + 1;
-
-            % Store sample and mask
             obj.samples(:, obj.t) = u;
             if ~isempty(mask)
                 obj.masks_full(:, obj.t) = mask;
             end
 
-            % Update sliding window indices
             if obj.t <= obj.T
                 obj.window_idx = 1:obj.t;
             else
                 obj.window_idx = (obj.t - obj.T + 1):obj.t;
             end
 
-            % Need at least d samples to form the ball center
             if length(obj.window_idx) < obj.d
                 obj.U_history(:, :, obj.t) = obj.U;
                 obj.lambda_star = NaN;
                 return;
             end
 
-            % Build window matrix — rank-2 update or full SVD (obj updated too)
-            [obj, What, sigma_vals] = build_window_matrix(obj);  % FIX: obj returned
+            [obj, What, sigma_vals] = build_window_matrix(obj);  
 
-            % Get ball radius
             rho = get_rho(obj, sigma_vals, What, obj.U);
-            rho = min(max(rho, 1e-6), sqrt(obj.d) - 1e-6);   % ball lives in Gr(d,n): max d_c = sqrt(d)
+            rho = min(max(rho, 1e-6), sqrt(obj.d) - 1e-6);   
 
-            % Inner gradient descent loop
             Y = obj.U;
 
             for iter = 1:obj.K
                 [Wstar, lambda_star] = gerost.inner_max(Y, What, rho, obj.d);
 
-                if lambda_star > 2
+                if lambda_star > 2.0
                     grad  = gerost.gradf(Y, Wstar);
-                    delta = lambda_star - 2.0;
+                    
+                    % Bound delta to prevent gradient step sizes vanishing entirely near the boundary
+                    delta = max(lambda_star - 2.0, 1e-2); 
                     L     = 4.0*(1.0 + 1.0/delta) + 4.0*sqrt(obj.d)/(delta^2);
 
                     YtW       = Y' * Wstar;
                     Nhat      = YtW * YtW';
+                    Nhat      = (Nhat + Nhat') / 2; % Ensure symmetry for robust eig
                     eigvals_N = eig(Nhat);
                     nu_0      = max(min(eigvals_N), 1e-10);
                     nu        = 2.0 * nu_0;
@@ -252,38 +201,14 @@ classdef gerost
     methods (Static)
 
         function [Wstar, lambda_star] = inner_max(Y, What, rho, d)
-            % INNER_MAX  Ball-constrained inner maximisation via Lagrangian duality.
-            %
-            %   [Wstar, lambda_star] = gerost.inner_max(Y, What, rho, d)
-            %
-            %   Finds  W* = argmax_{W in Gr(n,d)} ||W^T Y||_F^2
-            %               s.t. d_c(W, What) <= rho
-            %
-            %   For a fixed multiplier lambda the unconstrained maximiser is
-            %       W*(lambda) = top-d eigenvectors of  -Y Y^T + lambda What What^T
-            %   The scalar equation  d_c(W*(lambda), What) = rho  is solved by
-            %   bisection (64 iterations, no nested functions, no external calls).
-            %
-            %   Implementation note
-            %   -------------------
-            %   Nested functions inside classdef static methods cannot resolve
-            %   names from the MATLAB path, so fzero(@h_fn,...) with a nested
-            %   h_fn that called chordalDist would fail with "Unrecognized
-            %   function or variable 'chordalDist'".  The bisection loop below
-            %   is fully self-contained: chordal distance is inlined and
-            %   lowrank_topd_eig is called via the gerost.* qualified name.
-
             k          = size(Y, 2);
             LAMBDA_MIN = 2 + 1e-6;
 
-            % --- helper: chordal distance between Vd and What ---
-            %   d_c(A,B)^2 = d - ||A^T B||_F^2   (principal-angle definition)
             dc_fn = @(Vd) sqrt(max(d - sum(min(svd(Vd' * What), 1).^2), 0));
-
-            % --- evaluate h(lambda) = d_c(W*(lambda), What) - rho ---------
             h_fn  = @(lam) dc_fn(gerost.lowrank_topd_eig(What, Y, lam, d)) - rho;
 
-            lam_lo = 0;
+            % Start bound at LAMBDA_MIN to guarantee strict spectral gap (Lemma 4.1)
+            lam_lo = LAMBDA_MIN;
             lam_hi = 2.0 + sqrt(k) / max(rho, 1e-10);
 
             h_lo = h_fn(lam_lo);
@@ -291,12 +216,12 @@ classdef gerost
 
             if h_lo <= 0
                 % Unconstrained optimum already inside ball: constraint inactive.
-                lambda_star = LAMBDA_MIN;
-            elseif h_lo * h_hi >= 0
-                % Bracket invalid (h never crosses zero): clamp to LAMBDA_MIN.
-                lambda_star = LAMBDA_MIN;
+                % Force lambda_star to 2.0 to trigger fallback gradient behavior.
+                lambda_star = 2.0; 
+            elseif h_hi >= 0
+                % Function never crossed zero due to numeric precision; clamp to upper bound.
+                lambda_star = lam_hi;
             else
-                % Bisect for 64 iterations (~1e-19 accuracy in lambda).
                 for iter = 1:64
                     lam_mid = (lam_lo + lam_hi) / 2;
                     if h_fn(lam_mid) > 0
@@ -311,104 +236,53 @@ classdef gerost
                 lambda_star = (lam_lo + lam_hi) / 2;
             end
 
-            % lambda_star = max(lambda_star, LAMBDA_MIN);
-            Wstar       = gerost.lowrank_topd_eig(What, Y, lambda_star, d);
+            Wstar = gerost.lowrank_topd_eig(What, Y, lambda_star, d);
         end
 
         function Vd = lowrank_topd_eig(What, Y, lambda, d)
-            % LOWRANK_TOPD_EIG  Top-d eigenvectors of M = -Y Y^T + lambda What What^T.
-            %
-            %   Vd = gerost.lowrank_topd_eig(What, Y, lambda, d)
-            %
-            %   Because M is a sum of two low-rank matrices (ranks k and d),
-            %   all non-trivial eigenvectors lie in span(Y, What).  The
-            %   computation is therefore done in the (k+d)-dimensional joint
-            %   subspace — cost O(n(k+d) + (k+d)^3) instead of O(n^3).
-
             n = size(Y, 1);
 
-            % Orthonormal basis for span(Y, What)
-            Q  = orth([Y, What]);            % (n x m), m <= k + d
-            QY = Q' * Y;                     % (m x k)
-            QW = Q' * What;                  % (m x d)
+            Q  = orth([Y, What]);            
+            QY = Q' * Y;                     
+            QW = Q' * What;                  
 
-            % Projected matrix  M_small = Q^T M Q
-            M_small = -QY * QY' + lambda * (QW * QW');  % (m x m)
+            M_small = -QY * QY' + lambda * (QW * QW');  
+            M_small = (M_small + M_small') / 2; % Important Guard: Prevent complex eigenvalues
 
-            % Eigen-decompose the small matrix
             [V, D]   = eig(M_small, 'vector');
             [~, idx] = sort(D, 'descend');
 
-            % Map top-d eigenvectors back to R^n
-            Vd = Q * V(:, idx(1:d));         % (n x d)
+            Vd = Q * V(:, idx(1:d));         
         end
 
         function grad = gradf(Y, W)
-            % GRADF  Riemannian gradient of f(Y,W) = ||W^T Y||_F^2 w.r.t. Y.
-            %
-            %   grad = gerost.gradf(Y, W)
-            %
-            %   Euclidean gradient:  nabla_Y f = 2 W W^T Y
-            %   Tangent projection:  grad = P_Y^perp (nabla_Y f)
-            %                             = 2 (W W^T Y - Y (Y^T W W^T Y))
-            %                             = -2 P_Y^perp P_W Y
-            %
-            %   The minus sign matches the convention in descent_step where
-            %   the step is  tangent = -alpha * grad  (ascent on f).
-
-            WWtY = W * (W' * Y);                      % (n x k)
-            grad = -2 * (WWtY - Y * (Y' * WWtY));     % (n x k)
+            WWtY = W * (W' * Y);                      
+            grad = -2 * (WWtY - Y * (Y' * WWtY));     
         end
 
         function [U_new, s_new] = rank1_eig_update(U, s, v, sgn, d)
-            % Rank-1 update of an eigendecomposition.
-            %
-            % Given  C = U * diag(s.^2) * U^T  (the rank-d approximation of
-            % W_{t-1} W_{t-1}^T), computes the top-d eigen-factorisation of
-            %   C_new = C + sgn * v * v^T
-            %
-            % Parameters
-            % ----------
-            % U   : (n x d) left singular vectors (orthonormal columns)
-            % s   : (d x 1) singular values  (eigenvalues = s.^2)
-            % v   : (n x 1) update vector  (u_t or u_{t-T})
-            % sgn : +1 for rank-1 update, -1 for rank-1 downdate
-            % d   : number of components to retain
-            %
-            % Algorithm (O(nd + d^3))
-            % --------
-            % 1. Project v: a = U^T v,  residual p = v - U*a,  beta = ||p||
-            % 2. If beta > eps, extend the basis by one column p/beta,
-            %    form the (d+1)x(d+1) matrix M, and eigen-decompose it.
-            %    Otherwise stay in the d-dim subspace.
-            % 3. Keep the top-d eigenpairs; map back to ambient space.
-
-            a    = U' * v;       % (d x 1)  projection onto current basis
-            p    = v - U * a;    % (n x 1)  residual in ambient space
+            a    = U' * v;       
+            p    = v - U * a;    
             beta = norm(p);
 
             if beta > 1e-10
-                % v has a component outside the current d-dim subspace.
-                % Extend basis: U_ext = [U, p/beta]  (n x d+1)
                 p_hat = p / beta;
 
-                % (d+1)x(d+1) representation of C_new in the extended basis:
-                %   M = diag([s.^2; 0]) + sgn * [a; beta] * [a; beta]^T
-                avec = [a; beta];                               % (d+1 x 1)
-                M    = diag([s.^2; 0]) + sgn * (avec * avec'); % (d+1 x d+1)
+                avec = [a; beta];                               
+                M    = diag([s.^2; 0]) + sgn * (avec * avec'); 
+                M    = (M + M') / 2; % Prevent complex output
 
                 [Q, Lambda] = eig(M, 'vector');
                 [Lambda, idx] = sort(Lambda, 'descend');
                 Q = Q(:, idx);
 
-                U_ext = [U, p_hat];                    % (n x d+1)
-                U_new = U_ext * Q(:, 1:d);             % (n x d)
-                s_new = sqrt(max(Lambda(1:d), 0));     % guard tiny negatives
+                U_ext = [U, p_hat];                    
+                U_new = U_ext * Q(:, 1:d);             
+                s_new = sqrt(max(Lambda(1:d), 0));     
 
             else
-                % v lies almost entirely in the current subspace.
-                % d x d update:  M = diag(s.^2) + sgn * a * a^T
-                M = diag(s.^2) + sgn * (a * a');       % (d x d)
+                M = diag(s.^2) + sgn * (a * a');       
+                M = (M + M') / 2; % Prevent complex output
 
                 [Q, Lambda] = eig(M, 'vector');
                 [Lambda, idx] = sort(Lambda, 'descend');
@@ -420,5 +294,4 @@ classdef gerost
         end
 
     end
-    % ====================================================================
 end

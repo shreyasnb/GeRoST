@@ -5,7 +5,7 @@
 
 clear; clc; close all;
 
-% Apply IEEE Plot Settings
+% Apply IEEE Plot Settings (assumed available)
 ieee_settings();
 
 %% 1. Path Setup
@@ -85,8 +85,6 @@ d_est = 7; % Over-parameterize (d > k) to isolate outlier dimensions in the SVD 
 window_len = 30;
 
 % Initialize GeRoST (rho will be adaptively overridden inside the loop)
-% Note: 'K', 5 specifies that the tracker will internally run 5 gradient 
-% descent loops per frame during descent_step().
 gerost_tracker = gerost(n, k, d_est, window_len, 'K', 5, 'rho', 0.1, 'max_steps', N);
 gerost_tracker = gerost_tracker.initialize(U0_hat);
 
@@ -110,11 +108,7 @@ if run_grasta
         STATUS_grasta.curr_iter  = 0;
         STATUS_grasta.last_mu    = 1;
         STATUS_grasta.level      = 0;
-        
-        % Prevent division-by-zero on the converged, clean frame 11 gradient 
-        % by seeding a safe, stable initial step scale.
         STATUS_grasta.step_scale = 0.01; 
-        
         STATUS_grasta.last_w     = zeros(k, 1);
         STATUS_grasta.last_gamma = zeros(n, 1);
         
@@ -158,23 +152,15 @@ for t = T_init+1:N
     signal_norm = max(norm(gerost_tracker.U' * y_t), 1e-6);
     p_t = res_norm / signal_norm;
     
-    % Safely retrieve the window's k-th singular value
-    if ~isempty(gerost_tracker.sigma_vals_w) && length(gerost_tracker.sigma_vals_w) >= k
-        sigma_k = gerost_tracker.sigma_vals_w(k);
-    else
-        sigma_k = signal_norm * sqrt(window_len); % Approximation for the very first frame
-    end
-    sigma_k = max(sigma_k, 1e-6);
-    
     % Expand Grassmannian uncertainty ball gracefully for outliers
-    % Hard-cap the radius to prevent tracking the outlier
     p_t_capped = min(p_t, 0.15); % Cap NSR explicitly
-    rho_t = (sqrt(2) * p_t_capped) / (1 - p_t_capped) + sqrt(d_est-k); % Max rho_t ~ 1.414+0.25
+    
+    rho_t = (sqrt(2) * p_t_capped) / (1 - p_t_capped);
     
     % Inject adaptive rho into tracker
     gerost_tracker.rho_param = rho_t;
     
-    % Execute Tracking (Internally runs K=5 gradient descent loops)
+    % Execute Tracking
     gerost_tracker = gerost_tracker.descent_step(y_t);
     U_gerost = gerost_tracker.U;
 
@@ -231,7 +217,7 @@ fprintf('\nTracking complete!\n');
 %% 5. Visualization and Metrics
 fprintf('Generating plots...\n');
 
-figure('Name', 'Subspace Tracking Error', 'Position', [100, 100, 600, 400]);
+figure('Name', 'Subspace Tracking Error', 'Position', [100, 100, 700, 450]);
 plot(1:N, err_gerost, 'b-', 'LineWidth', 2, 'DisplayName', 'GeRoST');
 hold on;
 plot(1:N, err_great, 'g-.', 'LineWidth', 2, 'DisplayName', 'GREAT');
@@ -241,29 +227,72 @@ end
 xline(50, 'k:', 'LineWidth', 1.5, 'DisplayName', 'Occlusion Starts');
 xlabel('Frame Index (t)', 'Interpreter', 'latex');
 ylabel('Chordal Distance $d_c(\mathcal{U}_t, \hat{\mathcal{U}}_t)$', 'Interpreter', 'latex');
-title('Subspace Tracking Error under Moving Occlusions', 'Interpreter', 'latex');
+% title('Subspace Tracking Error under Moving Occlusions', 'Interpreter', 'latex');
 legend('Location', 'best', 'Interpreter', 'latex');
 grid on;
 saveas(gcf, 'results/subspace_error_case2.png');
 
 visual_frame = 250;
-figure('Name', 'FG-BG Separation', 'Position', [150, 150, 1200, 800]);
+% Taller aspect ratio suitable for a single column in an IEEE paper
+figure('Name', 'FG-BG Separation', 'Position', [150, 150, 600, 800]);
 
-subplot(3, 3, 1); imshow(reshape(Y(:, visual_frame), H, W), []); title('Original Frame');
-subplot(3, 3, 2); imshow(reshape(bg_true(:, visual_frame), H, W), []); title('True BG');
-subplot(3, 3, 3); imshow(reshape(fg_true(:, visual_frame), H, W), []); title('True Sparse FG');
+% Create a 4-row, 6-column underlying grid
+t = tiledlayout(4, 6, 'TileSpacing', 'compact', 'Padding', 'compact');
 
-subplot(3, 3, 4); imshow(reshape(bg_gerost(:, visual_frame), H, W), []); title('GeRoST BG');
-subplot(3, 3, 5); imshow(reshape(fg_gerost(:, visual_frame), H, W), []); title('GeRoST FG');
+% --- Row 1: Ground Truth (3 images, spanning 2 columns each) ---
+nexttile([1 2]); 
+imshow(reshape(Y(:, visual_frame), H, W), []); 
+title('Original Frame', 'Interpreter', 'latex', 'FontSize', 18);
+axis off;
 
+nexttile([1 2]); 
+imshow(reshape(bg_true(:, visual_frame), H, W), []); 
+title('True BG', 'Interpreter', 'latex', 'FontSize', 18);
+axis off;
+
+nexttile([1 2]); 
+imshow(reshape(fg_true(:, visual_frame), H, W), []); 
+title('True Sparse FG', 'Interpreter', 'latex', 'FontSize', 18);
+axis off;
+
+% --- Row 2: GRASTA (2 images, spanning 3 columns each) ---
 if run_grasta
-    subplot(3, 3, 6); imshow(reshape(fg_grasta(:, visual_frame), H, W), []); title('GRASTA FG');
+    nexttile([1 3]); 
+    imshow(reshape(bg_grasta(:, visual_frame), H, W), []); 
+    title('GRASTA BG', 'Interpreter', 'latex', 'FontSize', 18);
+    axis off;
+    
+    nexttile([1 3]); 
+    imshow(reshape(fg_grasta(:, visual_frame), H, W), []); 
+    title('GRASTA FG', 'Interpreter', 'latex', 'FontSize', 18);
+    axis off;
 else
-    subplot(3, 3, 6); text(0.1, 0.5, 'GRASTA Not Run'); axis off;
+    nexttile([1 3]); text(0.1, 0.5, 'GRASTA Not Run', 'Interpreter', 'latex'); axis off;
+    nexttile([1 3]); text(0.1, 0.5, 'GRASTA Not Run', 'Interpreter', 'latex'); axis off;
 end
 
-subplot(3, 3, 7); imshow(reshape(bg_great(:, visual_frame), H, W), []); title('GREAT BG');
-subplot(3, 3, 8); imshow(reshape(fg_great(:, visual_frame), H, W), []); title('GREAT FG');
+% --- Row 3: GREAT (2 images, spanning 3 columns each) ---
+nexttile([1 3]); 
+imshow(reshape(bg_great(:, visual_frame), H, W), []); 
+title('GREAT BG', 'Interpreter', 'latex', 'FontSize', 18);
+axis off;
+
+nexttile([1 3]); 
+imshow(reshape(fg_great(:, visual_frame), H, W), []); 
+title('GREAT FG', 'Interpreter', 'latex', 'FontSize', 18);
+axis off;
+
+% --- Row 4: GeRoST (2 images, spanning 3 columns each) ---
+nexttile([1 3]); 
+imshow(reshape(bg_gerost(:, visual_frame), H, W), []); 
+title('GeRoST BG', 'Interpreter', 'latex', 'FontSize', 18);
+axis off;
+
+nexttile([1 3]); 
+imshow(reshape(fg_gerost(:, visual_frame), H, W), []); 
+title('GeRoST FG', 'Interpreter', 'latex', 'FontSize', 18);
+axis off;
+
 saveas(gcf, 'results/fg_bg_visuals_case2.png');
 
 % C. ROC Curve for Foreground Separation
@@ -329,7 +358,7 @@ auc_gerost = trapz(fpr_gerost, tpr_gerost);
 [fpr_great, sort_idx] = sort(fpr_great); tpr_great = tpr_great(sort_idx);
 auc_great = trapz(fpr_great, tpr_great);
 
-figure('Name', 'ROC Curve', 'Position', [200, 200, 500, 450]);
+figure('Name', 'ROC Curve', 'Position', [100, 100, 700, 450]);
 plot(fpr_gerost, tpr_gerost, 'b-', 'LineWidth', 2, 'DisplayName', sprintf('GeRoST (AUC = %.3f)', auc_gerost));
 hold on;
 plot(fpr_great, tpr_great, 'g-.', 'LineWidth', 2, 'DisplayName', sprintf('GREAT (AUC = %.3f)', auc_great));
@@ -341,40 +370,44 @@ end
 plot([0, 1], [0, 1], 'k:', 'DisplayName', 'Random');
 xlabel('False Positive Rate (FPR)', 'Interpreter', 'latex');
 ylabel('True Positive Rate (TPR)', 'Interpreter', 'latex');
-title('ROC for Foreground Separation', 'Interpreter', 'latex');
+% title('ROC for Foreground Separation', 'Interpreter', 'latex');
 legend('Location', 'southeast', 'Interpreter', 'latex');
 grid on;
 saveas(gcf, 'results/roc_case2.png');
 
-figure('Position', [100 100 560 280]);
+figure('Position', [100 100 800 515]);
+hold on
 yyaxis left
-plot(1:N, rho_log, 'b-', 'LineWidth', 1.5);
+plot(1:N, rho_log, 'b-', 'LineWidth', 1.5, 'DisplayName', '$\rho_t$');
 ylabel('$\rho_t$', 'Interpreter', 'latex');
 ylim([0 0.5]);
 
 yyaxis right
-plot(1:N, lambda_log, 'r--', 'LineWidth', 1.5);
-ylabel('$\lambda^*_t$', 'Interpreter', 'latex');
-ylim([2 inf]);
+plot(1:N, lambda_log, 'r--', 'LineWidth', 1.5, 'DisplayName','$\lambda^*$');
+ylabel('$\lambda^*$', 'Interpreter', 'latex');
+ylim([1.98 inf]);
 
-xline(50, 'k:', 'LineWidth', 1.2, ...
-    'Label', 'Occlusion Starts', ...
-    'Interpreter', 'latex');
-yline(2, 'r:', 'LineWidth', 1.0); 
+xline(50, 'k:', 'LineWidth', 1.5, 'DisplayName', 'Occlusion Starts');
+% yline(2, 'r:', 'LineWidth', 1.0); 
 % uniqueness threshold lambda* > 2
 
 xlabel('Frame Index $t$', 'Interpreter', 'latex');
-title('Adaptive $\rho_t$ and $\lambda^*_t$ Evolution', ...
-    'Interpreter', 'latex');
-legend({'$\rho_t$', '$\lambda^*_t$'}, ...
-    'Interpreter', 'latex', 'Location', 'northeast');
+% title('Adaptive $\rho_t$ and $\lambda^*_t$ Evolution', ...
+%     'Interpreter', 'latex');
+legend('Location', 'best', 'Interpreter', 'latex', 'BackgroundAlpha',0.8);
 grid on;
+xlim([10 N]);
 saveas(gcf, 'results/rho_lambda_evolution.png');
-
 
 %% ========================================================================
 % HELPER FUNCTIONS
 % =========================================================================
+
+function d = chordalDist(U1, U2)
+    % Fallback function if chordalDist is not natively provided
+    d_squared = size(U1, 2) - norm(U1' * U2, 'fro')^2;
+    d = sqrt(max(d_squared, 0));
+end
 
 function [bg, fg] = extract_fg_bg_ista(y, U, lambda)
     w = U' * y; 
