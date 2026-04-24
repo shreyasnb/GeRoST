@@ -58,7 +58,7 @@ great_obj = great_obj.initialize(U0);
 d_win = min(d + params.order, n - 1);
 gerost_obj = gerost(n, d, d_win, params.T_d, ...
                     'K', params.K, 'rho', params.rho, ...
-                    'missing', false, 'max_steps', params.max_steps);
+                    'max_steps', params.max_steps);
 gerost_obj = gerost_obj.initialize(U0);
 
 end
